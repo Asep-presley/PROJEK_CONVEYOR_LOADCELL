@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Monitoring Conveyor Sortir Buah</title>
+<style>
+:root{--bg:#10151c;--panel:#18202a;--line:#2a3542;--text:#e8edf2;--mute:#8d9bab;
+--hijau:#4cc36b;--kuning:#f2c230;--merah:#ec4f45;--ok:#4cc36b;--warn:#f2c230}
+*{box-sizing:border-box;margin:0}
+body{background:var(--bg);color:var(--text);font:15px/1.5 "Segoe UI",system-ui,sans-serif;padding:20px 16px 40px}
+.wrap{max-width:1000px;margin:0 auto}
+header{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:18px}
+h1{font-size:20px;font-weight:700}
+.sub{color:var(--mute);font-size:13px}
+.pill{display:flex;align-items:center;gap:8px;background:var(--panel);border:1px solid var(--line);border-radius:99px;padding:6px 14px;font-size:13px}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--mute)}
+.dot.on{background:var(--ok)}.dot.wait{background:var(--warn)}
+.total{display:flex;gap:24px;flex-wrap:wrap;align-items:baseline;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 20px;margin-bottom:16px}
+.total b{font-size:32px;font-variant-numeric:tabular-nums}
+.total span{color:var(--mute);font-size:13px;display:block}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+@media(max-width:720px){.grid{grid-template-columns:1fr}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;border-top:4px solid var(--c)}
+.card.penuh{box-shadow:0 0 0 2px var(--c) inset}
+.card h2{font-size:16px;display:flex;justify-content:space-between;align-items:center}
+.card .desc{color:var(--mute);font-size:13px;margin-bottom:12px}
+.tag{font-size:12px;padding:2px 10px;border-radius:99px;background:var(--c);color:#10151c;font-weight:700}
+.body{display:flex;gap:16px;align-items:flex-end}
+.tube{position:relative;width:64px;height:170px;border:2px solid var(--line);border-radius:8px 8px 14px 14px;overflow:hidden;background:#0e131a;flex:none}
+.fill{position:absolute;left:0;right:0;bottom:0;height:0;background:var(--c);opacity:.9;transition:height .5s}
+.tube i{position:absolute;left:0;right:0;border-top:1px dashed #ffffff30}
+.num{font-size:44px;font-weight:700;line-height:1;font-variant-numeric:tabular-nums}
+.num small{font-size:16px;color:var(--mute);font-weight:400}
+.rows{margin-top:14px;border-top:1px solid var(--line);padding-top:10px;font-size:13px}
+.row{display:flex;justify-content:space-between;padding:3px 0}
+.row span{color:var(--mute)}
+.btns{display:flex;gap:8px;margin-top:12px}
+button{flex:1;background:#212c39;color:var(--text);border:1px solid var(--line);border-radius:8px;padding:8px;font:inherit;font-size:13px;cursor:pointer}
+button:hover{background:#2a3748}
+button:focus-visible{outline:2px solid var(--c,#fff);outline-offset:2px}
+.last{margin-top:16px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 18px;display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;font-size:14px}
+#err{display:none;margin-bottom:14px;background:#3a2a10;border:1px solid var(--warn);color:#ffe29a;padding:10px 14px;border-radius:8px;font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Monitoring Conveyor Sortir Buah</h1>
+      <div class="sub">Pemilahan berdasarkan warna dominan buah (sensor IR)</div>
+    </div>
+    <div class="pill"><span class="dot wait" id="fbDot"></span><span id="fbTxt">Menghubungkan…</span></div>
+  </header>
+
+  <div id="err"></div>
+
+  <div class="total">
+    <div><b id="totalBuah">0</b><span>Total buah terpilah</span></div>
+    <div><b id="alat">-</b><span>Status conveyor</span></div>
+    <div><b id="lastSeen" style="font-size:20px">-</b><span>Data terakhir dari ESP32</span></div>
+  </div>
+
+  <div class="grid" id="grid"></div>
+
+  <div class="last">
+    <div>Buah terakhir terdeteksi: <b id="terakhir">-</b></div>
+    <div class="sub">Bucket penuh = servo menutup jalur ke bucket itu</div>
+  </div>
+</div>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-app.js";
+import { getDatabase, ref, set, onValue, onDisconnect } from "https://www.gstatic.com/firebasejs/13.2.0/firebase-database.js";
+
+// ====== ISI DENGAN CONFIG DARI FIREBASE CONSOLE PROJECT conveyor-warna-loadcell ======
+const firebaseConfig = {
+  apiKey: "ISI_API_KEY",
+  authDomain: "conveyor-warna-loadcell.firebaseapp.com",
+  databaseURL: "https://conveyor-warna-loadcell-default-rtdb.firebaseio.com",
+  projectId: "conveyor-warna-loadcell",
+  storageBucket: "conveyor-warna-loadcell.firebasestorage.app",
+  messagingSenderId: "ISI_SENDER_ID",
+  appId: "ISI_APP_ID"
+};
+// ======================================================================================
+
+const BUCKET = [
+  { id: "hijau",  nama: "Bucket 1", label: "Hijau",  desc: "Belum matang",     warna: "var(--hijau)" },
+  { id: "kuning", nama: "Bucket 2", label: "Kuning", desc: "Setengah matang",  warna: "var(--kuning)" },
+  { id: "merah",  nama: "Bucket 3", label: "Merah",  desc: "Matang sempurna",  warna: "var(--merah)" }
+];
+const $ = id => document.getElementById(id);
+const data = { hijau:{}, kuning:{}, merah:{} };
+const kapasitas = { hijau:10, kuning:10, merah:10 };
+
+// Kerangka kartu
+$("grid").innerHTML = BUCKET.map(b => `
+  <div class="card" id="c-${b.id}" style="--c:${b.warna}">
+    <h2>${b.nama} <span class="tag" id="tag-${b.id}">KOSONG</span></h2>
+    <div class="desc">${b.label} · ${b.desc}</div>
+    <div class="body">
+      <div class="tube"><div class="fill" id="fill-${b.id}"></div><i style="bottom:50%"></i></div>
+      <div class="num"><span id="n-${b.id}">0</span> <small>/ <span id="k-${b.id}">10</span> buah</small></div>
+    </div>
+    <div class="rows">
+      <div class="row"><span>Servo jalur</span><b id="s-${b.id}">-</b></div>
+      <div class="row"><span>Berat (load cell)</span><b id="w-${b.id}">-</b></div>
+    </div>
+    <div class="btns">
+      <button data-aksi="kap" data-id="${b.id}">Atur kapasitas</button>
+      <button data-aksi="reset" data-id="${b.id}">Kosongkan</button>
+    </div>
+  </div>`).join("");
+
+function tampil(id){
+  const d = data[id] || {};
+  const n = Number(d.jumlah) || 0;
+  const k = kapasitas[id];
+  const penuh = d.penuh === true || n >= k;
+  $("n-"+id).textContent = n;
+  $("k-"+id).textContent = k;
+  $("fill-"+id).style.height = Math.min(100, n / k * 100) + "%";
+  const tag = $("tag-"+id);
+  tag.textContent = penuh ? "PENUH" : (n === 0 ? "KOSONG" : "TERISI");
+  $("c-"+id).classList.toggle("penuh", penuh);
+  const servo = d.servo ?? (penuh ? "tutup" : (d.jumlah == null ? null : "buka"));
+  $("s-"+id).textContent = servo == null ? "-" : (servo === "buka" ? "Terbuka" : "Tertutup");
+  $("w-"+id).textContent = d.berat != null ? Number(d.berat).toFixed(0) + " g" : "-";
+  $("totalBuah").textContent = BUCKET.reduce((t,b)=> t + (Number((data[b.id]||{}).jumlah)||0), 0);
+}
+
+try {
+  const app = initializeApp(firebaseConfig);
+  const db = getDatabase(app);
+
+  onValue(ref(db, ".info/connected"), s => {
+    const on = s.val() === true;
+    $("fbDot").className = "dot " + (on ? "on" : "wait");
+    $("fbTxt").textContent = on ? "Terhubung ke Firebase" : "Menghubungkan…";
+  });
+
+  BUCKET.forEach(b => {
+    onValue(ref(db, "conveyor/bucket/" + b.id), s => { data[b.id] = s.val() || {}; tampil(b.id); });
+    onValue(ref(db, "conveyor/pengaturan/kapasitas/" + b.id), s => {
+      if (s.val()) kapasitas[b.id] = Number(s.val());
+      tampil(b.id);
+    });
+  });
+
+  onValue(ref(db, "conveyor/status"), s => {
+    const v = s.val() || {};
+    $("alat").textContent = v.online === true ? "Online" : (v.online === false ? "Offline" : "Menunggu data");
+    $("terakhir").textContent = v.terakhir ? v.terakhir.toString().toUpperCase() : "-";
+    $("lastSeen").textContent = v.waktu ? v.waktu : "-";
+  });
+
+  document.addEventListener("click", e => {
+    const t = e.target.closest("button[data-aksi]");
+    if (!t) return;
+    const id = t.dataset.id;
+    if (t.dataset.aksi === "kap") {
+      const v = parseInt(prompt("Kapasitas maksimum bucket (jumlah buah):", kapasitas[id]), 10);
+      if (v > 0) set(ref(db, "conveyor/pengaturan/kapasitas/" + id), v);
+    } else if (confirm("Kosongkan hitungan bucket ini? Pastikan bucket fisiknya sudah dikosongkan.")) {
+      set(ref(db, "conveyor/perintah/reset/" + id), true);
+    }
+  });
+} catch (err) {
+  const e = $("err");
+  e.style.display = "block";
+  e.textContent = "Gagal terhubung ke Firebase: " + err.message + ". Periksa firebaseConfig di index.html.";
+}
+</script>
+</body>
+</html>
